@@ -1,0 +1,12 @@
+data/
+*.parquet
+*.zip
+*.tmp
+__pycache__/
+.env
+*.env
+kaggle.json
+*.key
+*secret*
+*credential*
+results/rerun/*.csv

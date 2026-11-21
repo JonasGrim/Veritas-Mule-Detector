@@ -1,0 +1,7 @@
+polars==2.1.0
+lightgbm==4.7.0
+numpy
+pyarrow
+scikit-learn
+scipy
+matplotlib

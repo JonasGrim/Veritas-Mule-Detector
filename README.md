@@ -1,0 +1,82 @@
+# Mule-account detection at a fixed analyst budget
+
+A graph-based detector for money-mule (pass-through) accounts, built for the alert volume a small or mid-size bank's analyst team can actually work. It runs on IBM's synthetic AML transaction data, so it says nothing yet about real bank data.
+
+![Recall vs alerts per day](results/recall_vs_budget.png)
+
+## Headline results
+HI-Medium was never used during development. Both tests were pre-registered before they ran (`prereg/`). Numbers are 3-seed means.
+
+| Test | Alerts/day | Mules caught (recall) | Precision | Alerts per true mule |
+|---|---|---|---|---|
+| HI-Medium, Sept 8–10 (813 mules) | 300 (6 analysts × 50) | 0.52 | 47% | 2.1 |
+| | 1,204 (same alert rate as HI-Small) | 0.71 | 16% | 6.3 |
+| HI-Medium forward, Sept 11–16 (2,064 mules), model frozen since Sept 7 | 300 | 0.43 | 49% | 2.0 |
+| | 1,204 | 0.58 | 16% | 6.1 |
+| HI-Small, Sept 8–10 (182 mules; development data) | 300 | 0.59 | 12% | 8.4 |
+
+On the same alerts, compared with simpler detectors:
+
+| Detector | HI-Medium Sept 8–10 @300/day | Forward Sept 11–16 @300/day |
+|---|---|---|
+| Random | 0.002 | 0.004 |
+| Hand-written pass-through rule | 0.021 | 0.023 |
+| Best single feature (chosen on the test days) | 0.129 | 0.095 |
+| Gradient-boosted model, 19 account features | 0.310 | 0.288 |
+| **Graph model (this project)** | **0.516** | **0.427** |
+| Graph model trained on shuffled labels (placebo) | 0.002 | 0.002 |
+
+## Honest reading
+- The graph features add a lot: about 1.5–1.7× the recall of the same model without them, and 4× the best single feature.
+- **The forward test missed its pre-registered bar** (0.45 at 300/day; it got 0.43). Precision held at 49%, but Sept 11–16 has about 1.3× as many mules per day as Sept 8–10: 2,064 mules for 1,800 alerts. Half of the alerts hit, and the team runs out of alerts. Run unretrained for 8–13 days, the model loses recall at a fixed budget.
+- A fixed team of 6 analysts catches about half the mules at the larger institution. At the same alert rate as the small one, it catches 71%.
+
+## Method
+1. **Daily causal snapshots.** Each day, every account with both inflow and outflow in the past 72 hours gets features that use only earlier transactions: volume, pass-through ratio, holding time, new counterparties, account age, prior history and shared senders/payees.
+2. **Graph features:**
+   - neighbour pass-through and account age;
+   - 2-cycles and scatter-gather motifs;
+   - *matched forwarding*: an inflow followed within 48h by an outflow of 80–100% of the amount (accounts with ≤ 60 transactions).
+3. **Score propagation.** A first model scores every account. Each account then gets features describing its senders' and payees' scores (1 and 2 hops), and this repeats for 3 rounds. Scores on training days are out-of-fold by account, so labels don't leak through neighbours.
+4. **Model.** LightGBM. Trained on labels from Sept 1–3, early-stopped on Sept 6–7.
+5. **Alerts.** Each test day, the top-K accounts go to analysts. An account already alerted isn't alerted again.
+
+A positive is an account that both sent and received a laundering transaction during the test days (an intermediary, not a victim or an end recipient).
+
+## Integrity checks
+- **Pre-registration.** HI-Medium tests and the forward test were written up before running (`prereg/`). Nothing was tuned on HI-Medium.
+- **Placebo.** The full pipeline trained on labels shuffled within each day scores at random level (0.002).
+- **Causality** (checked on HI-Small). Day-8 features are identical whether or not the data after Sept 8 exists. An earlier bug (snapshots included transactions stamped exactly midnight the next day) was found by this check and fixed before any number here.
+- **Port check.** The step-4 research script and this repo's code produce identical snapshot features.
+- **Run-to-run noise.** Polars' multithreaded aggregation isn't bit-for-bit deterministic. The same seed can move by up to about 0.03 between runs; 3-seed means move by about 0.01. Two runs of this repo on HI-Medium Sept 8–10 gave 0.516 and 0.529; the original script gave 0.528–0.529. The tables use the first run.
+
+## Limits
+- **Synthetic data only** (IBM AMLworld). Real mule behaviour, data quality and label lag differ.
+- **Development history.** About 17 configurations were compared on HI-Small Sept 8–10 during development, so the HI-Small number is optimistic. HI-Medium is the clean test.
+- **Low-illicit data** (LI-Small) is much harder: 0.44 recall at 300/day in development.
+- **Low precision at small scale:** 12% on HI-Small, so about 8 alerts per mule found.
+- **Currency conversion** uses rates implied by the whole file. These are not labels, but they are not strictly causal.
+- **No retraining in the forward test.** In production you'd retrain as labels come in.
+
+## Reproduce
+Needs Python 3.10+ and about 16 GB RAM for HI-Medium. Runs in about 10 minutes per configuration on a laptop.
+```
+pip install -r requirements.txt
+# download HI-Small_Trans.csv and HI-Medium_Trans.csv into data/ (see Data below)
+python src/prep_data.py data/HI-Small_Trans.csv  2022-09-11 data/hi_sep10.parquet
+python src/prep_data.py data/HI-Medium_Trans.csv 2022-09-11 data/himed_sep10.parquet
+python src/prep_data.py data/HI-Medium_Trans.csv 2022-09-17 data/himed_sep16.parquet
+python src/pipeline.py --data data/hi_sep10.parquet --mode full
+python src/pipeline.py --data data/himed_sep10.parquet --mode full --scale-ref data/hi_sep10.parquet
+python src/pipeline.py --data data/himed_sep16.parquet --last-day 16 --test 11 12 13 14 15 16 --mode full --scale 4.0144
+# same three with --mode baselines, then:
+python src/chart.py
+```
+
+## Data
+IBM Transactions for Anti Money Laundering (Altman et al., NeurIPS 2023 Datasets & Benchmarks): [Kaggle](https://www.kaggle.com/datasets/ealtman2019/ibm-transactions-for-anti-money-laundering-aml), [IBM/AML-Data](https://github.com/IBM/AML-Data). The data is under CDLA-Sharing-1.0 and isn't included in this repo.
+
+## Layout
+- `src/`: `load.py` (CSV to USD), `features.py` (snapshots), `chain.py` (neighbour scores), `model.py`, `pipeline.py`, `prep_data.py`, `chart.py`
+- `prereg/`: pre-registrations, written before each test
+- `results/`: logs, CSVs and the chart
