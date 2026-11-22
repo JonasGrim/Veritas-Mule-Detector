@@ -32,7 +32,9 @@ def fetch():
 
 
 def run(args):
-    r = subprocess.run([sys.executable] + args, cwd=ROOT, capture_output=True, text=True)
+    env = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
+    r = subprocess.run([sys.executable] + args, cwd=ROOT, capture_output=True,
+                       text=True, encoding="utf-8", errors="replace", env=env)
     if r.returncode: sys.exit(r.stdout[-2000:] + r.stderr[-2000:])
     return r.stdout
 
