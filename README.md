@@ -5,7 +5,9 @@ Veritas is a graph-based detector for money-mule (pass-through) accounts, built 
 ![Recall vs alerts per day](results/recall_vs_budget.png)
 
 ## Headline results
-HI-Medium was never used during development. Both tests were pre-registered before they ran (`prereg/`). Numbers are 3-seed means.
+HI-Medium was never used during development. Both tests were pre-registered before they ran (`prereg/`). Numbers are 3-seed means from the first run; repeat runs are under Integrity checks.
+
+Data size: the Sept 8–10 test reads HI-Medium transactions up to Sept 10 (20.3M rows); the forward test reads the full HI-Medium file (31.9M rows). HI-Small, up to Sept 10, is 5.1M rows.
 
 | Test | Alerts/day | Mules caught (recall) | Precision | Alerts per true mule |
 |---|---|---|---|---|
@@ -74,7 +76,7 @@ A positive is an account that both sent and received a laundering transaction du
 - **Placebo.** The full pipeline trained on labels shuffled within each day scores at random level (0.002).
 - **Causality** (checked on HI-Small). Day-8 features are identical whether or not the data after Sept 8 exists. An earlier bug (snapshots included transactions stamped exactly midnight the next day) was found by this check and fixed before any number here.
 - **Port check.** The step-4 research script and this repo's code produce identical snapshot features.
-- **Run-to-run noise.** Polars' multithreaded aggregation isn't bit-for-bit deterministic. The same seed can move by up to about 0.03 between runs; 3-seed means move by about 0.01. Two runs of this repo on HI-Medium Sept 8–10 gave 0.516 and 0.529; the original script gave 0.528–0.529. The tables use the first run.
+- **Run-to-run noise.** Polars' multithreaded aggregation isn't bit-for-bit deterministic. The same seed can move by up to about 0.03 between runs; 3-seed means move by about 0.01. Repeat runs with no changes (3-seed means, recall at 300/day): HI-Medium Sept 8–10, 4 runs: 0.516, 0.529, 0.528, 0.524 (precision 47–48%; 0.71 at 1,204/day every run). Forward Sept 11–16, 3 runs: 0.427, 0.433, 0.424 (precision 49–50%). The tables use the first run. Repeat results: `results/rerun/`, `results/rerun3/`, `results/rerun4/`.
 
 ## Limits
 - **Synthetic data only** (IBM AMLworld). Real mule behaviour, data quality and label lag differ.
