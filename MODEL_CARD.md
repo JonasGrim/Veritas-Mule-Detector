@@ -31,8 +31,8 @@ Baselines, placebo and full results: [README.md](README.md) and `results/`.
 
 ## Known limits and risks
 - **Synthetic data.** Laundering in AMLworld follows eight generator templates. The model may be partly learning the generator rather than mule behaviour. Real-world performance is unknown.
-- **Unrealistic precision.** Real alert precision would be much lower.
-- **Decay.** Recall at a fixed budget dropped from 0.52 to 0.43 within 8–13 days without retraining.
+- **Unrealistic precision.** 47–49% comes from complete labels, templated laundering, clean mule behaviour, few legitimate pass-through accounts, and clustered positives. Expect it to fall sharply on real data. See README, "Production gaps".
+- **Fixed-budget recall depends on volume.** Recall at a fixed budget fell from 0.52 to 0.43 when mule volume rose about 27%, while precision held at 47–49%. Monitor precision and recall-versus-achievable separately, so a staffing shortfall isn't mistaken for model drift.
 - **Label lag not modeled.** Real confirmed labels arrive weeks to months late.
 - **No explanations yet.** Alerts carry no reason codes.
 - **Run-to-run noise.** About ±0.03 recall per seed from non-deterministic multithreaded aggregation.
@@ -45,7 +45,7 @@ Baselines, placebo and full results: [README.md](README.md) and `results/`.
    - alert hit rate (confirmed mules / alerts worked), against a set floor;
    - feature drift (population stability index on the top 20 features);
    - share of alerts from accounts under 30 days old, to catch over-reliance on one signal.
-4. **Retraining** on a fixed cadence (start monthly, tighten if the forward decay pattern repeats on real data), with each retrained model re-run against a frozen holdout before release.
+4. **Retraining** on a fixed cadence (start monthly, tighten if precision falls between retrains on real data), with each retrained model re-run against a frozen holdout before release.
 5. **Fallback.** Keep the existing rule set running; if monitoring breaches a floor, revert alert allocation to rules.
 6. **Change log and ownership.** Named model owner, version history, and a record of every threshold or budget change.
 

@@ -28,7 +28,7 @@ On the same alerts, compared with simpler detectors:
 
 ## Honest reading
 - The graph features add a lot: about 1.5–1.7× the recall of the same model without them, and 4× the best single feature.
-- **The forward test missed its pre-registered bar** (0.45 at 300/day; it got 0.43). Precision held at 49%, but Sept 11–16 has about 1.3× as many mules per day as Sept 8–10: 2,064 mules for 1,800 alerts. Half of the alerts hit, and the team runs out of alerts. Run unretrained for 8–13 days, the model loses recall at a fixed budget.
+- **The forward test missed its pre-registered bar** (0.45 recall at 300 alerts/day; it got 0.43). Precision held at 49% (47% on Sept 8–10), so there's no sign the ranking got worse. What changed was volume: about 27% more mules per day (344 vs 271), and 2,064 mules for 1,800 alerts. Even a perfect model couldn't have passed 0.87 recall. This looks like a capacity problem, not model drift. IBM's generator doesn't adapt the way real launderers do, so this test can't show concept drift either way.
 - A fixed team of 6 analysts catches about half the mules at the larger institution. At the same alert rate as the small one, it catches 71%.
 
 ## What it means for an analyst team
@@ -76,10 +76,17 @@ A positive is an account that both sent and received a laundering transaction du
 ## Production gaps
 What would have to change before this ran at a bank:
 - **Simulator bias.** IBM's generator plants laundering in eight templates. In HI-Small's pattern file: cycle 54, gather-scatter 51, bipartite 49, fan-out 48, scatter-gather 44, stack 43, random 41, fan-in 40 attempts. The graph features (2- and 3-cycles, scatter-gather, matched forwarding) are built to find those shapes, so part of the lift is likely the model learning the generator. Real mule networks are messier. The first real-data test should look at how much the motif features add on their own.
-- **Precision is not realistic.** 47–49% precision comes from clean synthetic labels and a strong laundering signal. Real transaction monitoring typically runs well under 10%. Treat the ranking against the baselines as the result, not the absolute precision.
+- **Why precision is high here, and why it won't hold.** 47–49% precision is a property of the synthetic data, not something to expect at a bank:
+  - *Perfect labels.* Every laundering transaction is labeled. At a bank many alerts on real mules are never confirmed, so they count as false positives.
+  - *Template laundering.* IBM plants laundering in 8 fixed shapes, and the graph features look for those shapes.
+  - *Clean mules.* Synthetic mules forward near-identical amounts with no cover activity and don't adapt after being caught.
+  - *Few legitimate look-alikes.* No P2P, and few landlords, payroll or small-business accounts that pass money through for honest reasons. These are the main source of false positives in real mule detection.
+  - *Clustered positives.* Whole laundering chains count as positives, so finding one mule often finds its neighbours.
+
+  What should carry over is the ranking against the baselines and the method of scoring at an alert budget. Expect absolute precision to fall sharply on real data.
 - **Label lag.** Training uses labels from Sept 1–3 to score Sept 8. Confirmed-mule labels at a bank arrive weeks or months later (case closure, SAR decisions, customer complaints). The next test is training with labels lagged 30+ days.
 - **Reason codes.** Analysts get a score, not a reason. A production version needs the top contributing features per alert (for example SHAP values) in plain language: "received 9 new senders in 48h and forwarded 95% to 2 accounts already flagged".
-- **Retraining and monitoring.** The forward test shows decay within 8–13 days without new labels. A deployment needs a retraining cadence, drift monitoring on feature distributions and alert hit rate, and a fallback rule set. See [MODEL_CARD.md](MODEL_CARD.md).
+- **Retraining and monitoring.** The forward test showed no loss of precision over 8–13 days without new labels, but real launderers adapt and synthetic ones don't. A deployment needs a retraining cadence, drift monitoring on feature distributions and alert hit rate, and a fallback rule set. See [MODEL_CARD.md](MODEL_CARD.md).
 - **Data the dataset lacks.** No KYC, device, IP, login, account-opening channel or customer age. These are usually the strongest real mule signals and would sit alongside the graph features.
 
 ## Compared with published results
