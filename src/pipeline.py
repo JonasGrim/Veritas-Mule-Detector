@@ -19,6 +19,7 @@ ap.add_argument("--test", type=int, nargs="+", default=[8, 9, 10]); ap.add_argum
 ap.add_argument("--scale", type=float, default=None, help="candidate ratio vs HI-Small; adds scaled budgets")
 ap.add_argument("--scale-ref", default=None, help="HI-Small parquet: compute the ratio from mean test-day candidates")
 ap.add_argument("--seeds", type=int, default=3); ap.add_argument("--out", default="results")
+ap.add_argument("--save-alerts", action="store_true", help="write each detector's alert list (account, day, score) to <out>/alerts/")
 A = ap.parse_args()
 T0 = time.time()
 def log(*a): print(f"[{time.time()-T0:6.0f}s]", *a, flush=True)
@@ -101,11 +102,27 @@ del base, bt
 log("test days", TEST, f"[{t0:%b %d}, {t1:%b %d})", "positives", len(pos), "test accounts", allf.filter(pl.col("d").is_in(TEST))["acct"].n_unique())
 
 
-def evaluate(f, col):
+TAG = f"{os.path.splitext(os.path.basename(A.data))[0]}_d{min(TEST)}-{max(TEST)}"
+i2s = ids.sort("i")["a"]
+
+
+def save_alerts(f, col, al, name, kn):
+    """Alert list for one detector and budget: original account id, day alerted, score, rank within the day, true label."""
+    d = pl.DataFrame({"acct": list(al), "d": list(al.values())}, schema={"acct": f["acct"].dtype, "d": pl.Int8})
+    d = d.join(f.select("acct", "d", score=pl.col(col).cast(pl.Float64)), on=["acct", "d"], how="left")
+    d = d.with_columns(rank=pl.col("score").rank("ordinal", descending=True).over("d").cast(pl.Int32),
+                       mule=pl.col("acct").is_in(list(pos)).cast(pl.Int8),
+                       account=pl.col("acct").map_elements(lambda i: i2s[int(i)], return_dtype=pl.Utf8))
+    os.makedirs(f"{A.out}/alerts", exist_ok=True)
+    d.select("account", "d", "rank", "score", "mule").sort(["d", "rank"]).write_csv(f"{A.out}/alerts/{TAG}_{name}_{kn}.csv")
+
+
+def evaluate(f, col, name=None):
     r = {}
     for kn, K in KS.items():
         al = simulate(f, col, K, TEST); hit = set(al) & pos
         r[kn] = len(hit) / len(pos); r[kn + "_prec"] = len(hit) / len(al); r[kn + "_alerts"] = len(al)
+        if A.save_alerts and name: save_alerts(f, col, al, name, kn)
     return r
 
 
@@ -117,33 +134,33 @@ def with_chain(f, score, prefix=""):
     return f.join(cf, on=["acct", "d"], how="left").sort(["d", "acct"])
 
 
-def final(f, cols, seed):
+def final(f, cols, seed, name=None):
     tr = f.filter(pl.col("d") <= 3); tu = f.filter(pl.col("d").is_in([6, 7]))
     rng = np.random.default_rng(seed); y = tr["ibm_mule"].to_numpy(); keep = (y == 1) | (rng.random(len(y)) < 0.1); trs = tr.filter(pl.Series(keep))
     m = fit(Xm(trs, cols), trs["ibm_mule"].to_numpy(), Xm(tu, cols), tu["ibm_mule"].to_numpy(), seed=seed)
     te = f.filter(pl.col("d").is_in(TEST)); te = te.with_columns(s=pl.Series(m.predict_proba(Xm(te, cols))[:, 1]))
-    return evaluate(te, "s")
+    return evaluate(te, "s", name)
 
 
 FULL = FE + chain.CH + RAW + MOT
-def pipeline(cols2, rounds, seed, f0):
+def pipeline(cols2, rounds, seed, f0, name=None):
     """full_r3: stage 1 on base features, then chain features + 2 more propagation rounds."""
     p = oof(f0, FE, seed); f = with_chain(f0, p); cols = list(cols2)
     for r in range(rounds):
         p = oof(f, cols, seed); pre = f"r{r+2}_"; f = with_chain(f, p, pre); cols = cols + [pre + c for c in chain.CH]
-    return final(f, cols, seed)
+    return final(f, cols, seed, name)
 
 
 res = []
 short = lambda r: {k: round(v, 3) for k, v in r.items() if k in KS}
 if A.mode == "full":
     for seed in range(A.seeds):
-        r = pipeline(FULL, 2, seed, allf); r.update(variant="full_r3", seed=seed); res.append(r); log("full_r3", seed, short(r))
+        r = pipeline(FULL, 2, seed, allf, f"full_r3_s{seed}"); r.update(variant="full_r3", seed=seed); res.append(r); log("full_r3", seed, short(r))
 else:
     te = allf.filter(pl.col("d").is_in(TEST))
     te = te.with_columns(rand=pl.Series(np.random.default_rng(0).random(te.height)), vol=pl.min_horizontal("in_usd", "out_usd"), rule=rule(te))
     for c in ("rand", "vol", "rule"):
-        r = evaluate(te, c); r.update(variant=c, seed=0); res.append(r); log(c, short(r))
+        r = evaluate(te, c, c); r.update(variant=c, seed=0); res.append(r); log(c, short(r))
     # best single feature, picked on the test days (oracle choice, favours the baseline)
     best = None
     for c in FE + RAW + MOT:
@@ -154,14 +171,14 @@ else:
     _, c, sgn = best; t = te.with_columns(z=(pl.col(c).cast(pl.Float64).fill_null(-1e18 if sgn == 1 else 1e18) * sgn))
     r = evaluate(t, "z"); r.update(variant=f"best_single:{c}", seed=0); res.append(r); log("best single", c, short(r))
     for seed in range(A.seeds):
-        r = final(allf, FE, seed); r.update(variant="base_model", seed=seed); res.append(r); log("base", seed, short(r))
+        r = final(allf, FE, seed, f"base_model_s{seed}"); r.update(variant="base_model", seed=seed); res.append(r); log("base", seed, short(r))
     rng = np.random.default_rng(7); y = allf["ibm_mule"].to_numpy().copy(); d_ = allf["d"].to_numpy()
     for d in range(1, 8):
         i = np.where(d_ == d)[0]; y[i] = rng.permutation(y[i])
     r = pipeline(FULL, 2, 0, allf.with_columns(ibm_mule=pl.Series(y, dtype=pl.Int8))); r.update(variant="placebo_full_r3", seed=0); res.append(r); log("placebo", short(r))
 
 R = pl.DataFrame(res); os.makedirs(A.out, exist_ok=True)
-tag = f"{os.path.splitext(os.path.basename(A.data))[0]}_d{min(TEST)}-{max(TEST)}_{A.mode}"
+tag = f"{TAG}_{A.mode}"
 R.write_csv(f"{A.out}/{tag}.csv")
 num = [c for c in R.columns if R[c].dtype in (pl.Float64, pl.Int64) and c != "seed"]
 pl.Config.set_tbl_cols(30); pl.Config.set_tbl_width_chars(250)

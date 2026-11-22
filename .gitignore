@@ -10,3 +10,4 @@ kaggle.json
 *secret*
 *credential*
 results/rerun/*.csv
+results/demo/

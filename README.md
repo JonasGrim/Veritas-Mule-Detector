@@ -44,7 +44,18 @@ Same team (6 analysts × 50 alerts/day), same 900 alerts over Sept 8–10 on HI-
 
 On the forward test (Sept 11–16, model frozen) the same team found 881 of 2,064 mules at 2.0 alerts per mule. Precision held. Recall fell because there were more mules than alerts.
 
-Dollar impact isn't reported yet. It needs the alerted account lists saved per run, which the current pipeline doesn't do.
+**Dollars** (HI-Small, development data, one seed; the HI-Medium run is pending). Ten of 182 mules moved 94% of the $324M laundering flow; the median mule moved about $12,300. The typical mule passed money on within 13 hours of first receiving laundered funds (90% within 52 hours). Two consequences:
+- Dollar totals mostly measure whether a few huge accounts were caught. The hand rule catches 16 mules but "covers" 57% of the dollars. Compare detectors on mules caught and on money moved after the alert, not on totals.
+- Most mule money has moved before a daily alert fires. Money that caught mules sent on *after* being alerted: Veritas about $0.5M, account-feature model $0.13M, hand rule $0.08M. Veritas is about 4× better, but the bigger lever for preventing loss is alert speed (scoring when money arrives, intraday), not ranking alone.
+
+`src/dollars.py` produces this view from the alert lists that `pipeline.py --save-alerts` writes.
+
+## Quick demo (about 2 minutes)
+```
+pip install -r requirements.txt
+python demo.py
+```
+Downloads the prepared HI-Small file (about 90 MB) on first run, trains one seed, and prints recall, the dollar view and the top 3 alerts with the evidence behind each (money in and out in the last 72 hours, and the fastest in-then-out forward). It ran in 75 seconds on a 2-core machine. HI-Small is the development set, so its recall is optimistic.
 
 ## Method
 1. **Daily causal snapshots.** Each day, every account with both inflow and outflow in the past 72 hours gets features that use only earlier transactions: volume, pass-through ratio, holding time, new counterparties, account age, prior history and shared senders/payees.
@@ -105,13 +116,16 @@ python src/pipeline.py --data data/himed_sep10.parquet --mode full --scale-ref d
 python src/pipeline.py --data data/himed_sep16.parquet --last-day 16 --test 11 12 13 14 15 16 --mode full --scale 4.0144
 # same three with --mode baselines, then:
 python src/chart.py
+# dollar view: add --save-alerts to the runs above, then e.g.
+python src/dollars.py --data data/himed_sep10.parquet --test 8 9 10
 ```
 
 ## Data
-IBM Transactions for Anti Money Laundering (Altman et al., NeurIPS 2023 Datasets & Benchmarks): [Kaggle](https://www.kaggle.com/datasets/ealtman2019/ibm-transactions-for-anti-money-laundering-aml), [IBM/AML-Data](https://github.com/IBM/AML-Data). The data is under CDLA-Sharing-1.0 and isn't included in this repo.
+IBM Transactions for Anti Money Laundering (Altman et al., NeurIPS 2023 Datasets & Benchmarks): [Kaggle](https://www.kaggle.com/datasets/ealtman2019/ibm-transactions-for-anti-money-laundering-aml), [IBM/AML-Data](https://github.com/IBM/AML-Data). The data is under CDLA-Sharing-1.0 and isn't included in this repo. The demo's prepared HI-Small file (rows before Sept 11, amounts converted to USD) is attached to the `data-v1` release under the same license.
 
 ## Layout
-- `src/`: `load.py` (CSV to USD), `features.py` (snapshots), `chain.py` (neighbour scores), `model.py`, `pipeline.py`, `prep_data.py`, `chart.py`
+- `demo.py`: the 2-minute demo
+- `src/`: `load.py` (CSV to USD), `features.py` (snapshots), `chain.py` (neighbour scores), `model.py`, `pipeline.py`, `prep_data.py`, `chart.py`, `dollars.py` (dollar view of saved alert lists)
 - `prereg/`: pre-registrations, written before each test
 - `results/`: logs, CSVs and the chart
 - `MODEL_CARD.md`: intended use, limits, monitoring and retraining plan
